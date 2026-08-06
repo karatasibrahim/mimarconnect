@@ -1,4 +1,4 @@
-import { useAbility } from '@casl/vue'
+import { ability } from '@/plugins/casl/ability'
 
 /**
  * Returns ability result if ACL is configured or else just return true
@@ -34,9 +34,15 @@ export const canViewNavMenuGroup = item => {
   
   return can(item.action, item.subject) && hasAnyVisibleChild
 }
+// ℹ️ Uses the `ability` singleton directly rather than useAbility() (Vue's
+// inject()-based composable): router.beforeEach global guards run outside
+// any component/app injection context (vue-router only wraps per-component
+// guards in app.runWithContext, not global ones — see guardToPromiseFn in
+// vue-router's source), so inject() has nothing to find here and throws.
+// The singleton is the exact same instance abilitiesPlugin installs in
+// src/plugins/casl/index.js, kept in sync via ability.update() in the auth
+// store, so this reads identical data to what useAbility() gives components.
 export const canNavigate = to => {
-  const ability = useAbility()
-
   // Get the most specific route (last one in the matched array)
   const targetRoute = to.matched[to.matched.length - 1]
 

@@ -1,21 +1,18 @@
-import { useAuthStore } from '@/stores/auth'
-
 const emailRouteComponent = () => import('@/pages/apps/email/index.vue')
 
 // 👉 Redirects
 export const redirects = [
-  // ℹ️ Any signed-in tenant member (regardless of role) lands on the
-  // dashboard; ACL for what they can do there is based on abilities, not this redirect.
+  // ℹ️ This redirect is resolved synchronously during router.install(), which
+  // runs before the Pinia plugin (see src/@core/utils/plugins.js's
+  // alphabetical load order) — so it must NOT depend on the auth store
+  // (calling useAuthStore() here throws "no active Pinia"). Always point at
+  // the dashboard and let guards.js's beforeEach — which awaits
+  // authStore.waitUntilReady() and runs as a deferred microtask after every
+  // plugin has loaded — bounce signed-out users to /login instead.
   {
     path: '/',
     name: 'index',
-    redirect: to => {
-      const authStore = useAuthStore()
-      if (authStore.user)
-        return { name: 'dashboard' }
-
-      return { name: 'login', query: to.query }
-    },
+    redirect: () => ({ name: 'dashboard' }),
   },
   {
     path: '/pages/user-profile',
