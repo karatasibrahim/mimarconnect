@@ -1,0 +1,113 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function claimTenant() {
+      return request.auth.token.tenantId;
+    }
+
+    function claimRole() {
+      return request.auth.token.role;
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() && request.auth.token.platformAdmin == true;
+    }
+
+    function sameTenant(tenantId) {
+      return isSignedIn() && claimTenant() == tenantId;
+    }
+
+    function isOwnerOrAdmin() {
+      return claimRole() in ['owner', 'admin'];
+    }
+
+    function isEditorUp() {
+      return claimRole() in ['owner', 'admin', 'editor'];
+    }
+
+    function unchangedProtectedFields(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // users/{uid} — one doc per Firebase Auth user, holds tenantId + role
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || sameTenant(resource.data.tenantId) || isPlatformAdmin());
+      allow update: if isSignedIn() && request.auth.uid == uid
+                    && unchangedProtectedFields(['role', 'tenantId']);
+      // role/tenantId are only ever set by Cloud Functions via the Admin SDK
+      allow create, delete: if false;
+    }
+
+    // slugs/{slug} — public-site path reservation, maps slug -> tenantId.
+    // Publicly readable (the public site page resolves a slug to a tenant)
+    // but only ever written by the claimTenantSlug Cloud Function (Admin
+    // SDK), since uniqueness needs a cross-document transaction that rules
+    // alone can't express.
+    match /slugs/{slug} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if sameTenant(tenantId) || isPlatformAdmin();
+      // Owner/admin can update their own tenant but not its billing/identity
+      // fields; a platform admin may only touch plan/subscriptionStatus
+      // (manual SaaS plan assignment — see src/pages/admin/tenants.vue).
+      allow update: if (sameTenant(tenantId) && isOwnerOrAdmin()
+                          && unchangedProtectedFields(['plan', 'subscriptionStatus', 'ownerUid', 'slug']))
+                    || (isPlatformAdmin()
+                          && unchangedProtectedFields(['name', 'ownerUid', 'slug']));
+      // tenant creation/deletion only via createTenantOnSignup (Admin SDK)
+      allow create, delete: if false;
+
+      match /projects/{projectId} {
+        allow read: if sameTenant(tenantId) || resource.data.isPublic == true;
+        allow create, update: if sameTenant(tenantId) && isEditorUp();
+        allow delete: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      match /clients/{clientId} {
+        allow read: if sameTenant(tenantId);
+        allow create, update: if sameTenant(tenantId) && isEditorUp();
+        allow delete: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      match /quotes/{quoteId} {
+        allow read: if sameTenant(tenantId);
+        allow create, update: if sameTenant(tenantId) && isEditorUp();
+        allow delete: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      match /invites/{token} {
+        allow read, write: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if sameTenant(tenantId);
+        allow create, update: if sameTenant(tenantId) && isEditorUp();
+        allow delete: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      match /measurements/{measurementId} {
+        allow read: if sameTenant(tenantId);
+        allow create, update: if sameTenant(tenantId) && isEditorUp();
+        allow delete: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+
+      // tenants/{tenantId}/public/profile — the public-safe subset of tenant
+      // info (description, contact, logo) shown on the /o/{slug} page. Kept
+      // as a separate document (not the tenant doc itself) so it can be
+      // publicly readable without ever exposing plan/billing fields.
+      match /public/{docId} {
+        allow read: if true;
+        allow write: if sameTenant(tenantId) && isOwnerOrAdmin();
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function sameTenant(tenantId) {
+      return isSignedIn() && request.auth.token.tenantId == tenantId;
+    }
+
+    // tenants/{tenantId}/public/... — logo and public-site images, readable
+    // by anyone (shown on the unauthenticated /o/{slug} page).
+    match /tenants/{tenantId}/public/{allPaths=**} {
+      allow read: if true;
+      allow write: if sameTenant(tenantId);
+    }
+
+    // tenants/{tenantId}/... — all other uploaded files (project photos,
+    // quote attachments, etc.) are scoped under their tenant's folder.
+    match /tenants/{tenantId}/{allPaths=**} {
+      allow read, write: if sameTenant(tenantId);
+    }
+  }
+}
